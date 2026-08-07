@@ -34,7 +34,7 @@ Transcript:
 """
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
+        model="gemini-3.6-flash",
         contents=prompt,
     )
 
