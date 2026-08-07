@@ -1,4 +1,6 @@
 import os
+import re
+import gdown
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,59 +21,52 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome!\n\n"
-        "Send me a video and I'll download it for processing."
+        "👋 Welcome to ClipGenius AI\n\n"
+        "Send me a Google Drive video link."
     )
 
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    video = update.message.video or update.message.document
+async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
 
-    if not video:
-        await update.message.reply_text("❌ Please send a video.")
+    if "drive.google.com" not in text:
+        await update.message.reply_text("❌ Please send a valid Google Drive link.")
         return
 
-    status = await update.message.reply_text("📥 Receiving your video...")
+    status = await update.message.reply_text("⬇️ Downloading from Google Drive...")
 
     try:
-        file = await context.bot.get_file(video.file_id)
+        match = re.search(r"/d/([a-zA-Z0-9_-]+)", text)
 
-        filename = f"{video.file_unique_id}.mp4"
-        filepath = os.path.join(DOWNLOAD_FOLDER, filename)
+        if not match:
+            match = re.search(r"id=([a-zA-Z0-9_-]+)", text)
 
-        await status.edit_text("⬇️ Downloading video...")
+        if not match:
+            await status.edit_text("❌ Couldn't find file ID.")
+            return
 
-        await file.download_to_drive(custom_path=filepath)
+        file_id = match.group(1)
 
-        size_mb = round(video.file_size / (1024 * 1024), 2)
+        url = f"https://drive.google.com/uc?id={file_id}"
+
+        output = os.path.join(DOWNLOAD_FOLDER, f"{file_id}.mp4")
+
+        gdown.download(url, output, quiet=False)
 
         await status.edit_text(
-            f"✅ Download complete!\n\n"
-            f"📁 File: {filename}\n"
-            f"📦 Size: {size_mb} MB\n\n"
-            f"Next step: AI processing..."
+            "✅ Download complete!\n\n"
+            f"Saved to:\n{output}"
         )
 
     except Exception as e:
-        print(e)
         await status.edit_text(f"❌ Error:\n{e}")
 
 
 def main():
-    app = (
-        ApplicationBuilder()
-        .token(TOKEN)
-        .read_timeout(600)
-        .write_timeout(600)
-        .connect_timeout(60)
-        .pool_timeout(60)
-        .build()
-    )
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(
-        MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_drive))
 
     print("Bot is running...")
     app.run_polling()
