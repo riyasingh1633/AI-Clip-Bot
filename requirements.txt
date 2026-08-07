@@ -1,6 +1,6 @@
 python-telegram-bot==22.3
 python-dotenv
-google-generativeai
+google-genai
 faster-whisper
 ffmpeg-python
 opencv-python-headless
@@ -9,3 +9,4 @@ pydub
 numpy
 requests
 aiofiles
+yt-dlp
