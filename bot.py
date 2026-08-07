@@ -1,31 +1,61 @@
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import os
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+from dotenv import load_dotenv
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+load_dotenv()
+
+TOKEN = os.getenv("BOT_TOKEN")
+
+DOWNLOAD_FOLDER = "downloads"
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎬 Send me a video and I'll create viral clips from it."
+        "👋 Welcome!\n\n"
+        "Send me a video and I'll download it for processing."
     )
+
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📥 Downloading your video...")
+
+    video = update.message.video or update.message.document
+
+    if not video:
+        await update.message.reply_text("❌ Please send a video.")
+        return
+
+    file = await context.bot.get_file(video.file_id)
+
+    filename = f"{video.file_unique_id}.mp4"
+    filepath = os.path.join(DOWNLOAD_FOLDER, filename)
+
+    await file.download_to_drive(filepath)
+
     await update.message.reply_text(
-        "⏳ Video received.\n\nProcessing... Please wait."
+        f"✅ Video downloaded!\nSaved as:\n{filename}\n\nNext we'll process it with AI."
     )
 
-    video = await update.message.video.get_file()
-    await video.download_to_drive("input.mp4")
 
-    # AI clipping code will be added here later.
+def main():
+    app = Application.builder().token(TOKEN).build()
 
-    await update.message.reply_text(
-        "✅ Video uploaded successfully."
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(
+        MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video)
     )
 
-app = Application.builder().token(BOT_TOKEN).build()
+    print("Bot is running...")
+    app.run_polling()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.VIDEO, handle_video))
 
-app.run_polling()
+if __name__ == "__main__":
+    main()
