@@ -1,0 +1,11 @@
+python-telegram-bot==22.3
+python-dotenv
+google-generativeai
+faster-whisper
+ffmpeg-python
+opencv-python-headless
+moviepy
+pydub
+numpy
+requests
+aiofiles
