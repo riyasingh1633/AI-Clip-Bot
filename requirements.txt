@@ -11,3 +11,5 @@ requests
 aiofiles
 yt-dlp
 gdown
+faster-whisper
+ffmpeg-python
