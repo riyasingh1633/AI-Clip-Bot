@@ -1,7 +1,7 @@
 import os
 from telegram import Update
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
@@ -25,28 +25,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📥 Downloading your video...")
-
     video = update.message.video or update.message.document
 
     if not video:
         await update.message.reply_text("❌ Please send a video.")
         return
 
-    file = await context.bot.get_file(video.file_id)
+    status = await update.message.reply_text("📥 Receiving your video...")
 
-    filename = f"{video.file_unique_id}.mp4"
-    filepath = os.path.join(DOWNLOAD_FOLDER, filename)
+    try:
+        file = await context.bot.get_file(video.file_id)
 
-    await file.download_to_drive(filepath)
+        filename = f"{video.file_unique_id}.mp4"
+        filepath = os.path.join(DOWNLOAD_FOLDER, filename)
 
-    await update.message.reply_text(
-        f"✅ Video downloaded!\nSaved as:\n{filename}\n\nNext we'll process it with AI."
-    )
+        await status.edit_text("⬇️ Downloading video...")
+
+        await file.download_to_drive(custom_path=filepath)
+
+        size_mb = round(video.file_size / (1024 * 1024), 2)
+
+        await status.edit_text(
+            f"✅ Download complete!\n\n"
+            f"📁 File: {filename}\n"
+            f"📦 Size: {size_mb} MB\n\n"
+            f"Next step: AI processing..."
+        )
+
+    except Exception as e:
+        print(e)
+        await status.edit_text(f"❌ Error:\n{e}")
 
 
 def main():
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .read_timeout(600)
+        .write_timeout(600)
+        .connect_timeout(60)
+        .pool_timeout(60)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
