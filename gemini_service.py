@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY")
+)
 
 
 def find_best_clips(transcript):
@@ -38,4 +40,23 @@ Transcript:
         contents=prompt,
     )
 
-    return response.text
+    text = response.text.strip()
+
+    # Remove Markdown code fences if Gemini wraps JSON
+    if text.startswith("```"):
+        lines = text.splitlines()
+
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+
+        text = "\n".join(lines).strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Gemini returned invalid JSON:\n{text}"
+        ) from e
