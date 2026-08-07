@@ -74,7 +74,7 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("Starting Whisper...")
 
         # Whisper transcription
-        transcript, duration = transcribe(output)
+        transcript = transcribe(output)
 
         transcript_file = "transcript.txt"
 
