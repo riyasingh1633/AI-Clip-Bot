@@ -1,6 +1,10 @@
 import os
 import re
 import gdown
+
+from dotenv import load_dotenv
+from whisper_service import transcribe
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,7 +13,6 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -30,10 +33,14 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if "drive.google.com" not in text:
-        await update.message.reply_text("❌ Please send a valid Google Drive link.")
+        await update.message.reply_text(
+            "❌ Please send a valid Google Drive link."
+        )
         return
 
-    status = await update.message.reply_text("⬇️ Downloading from Google Drive...")
+    status = await update.message.reply_text(
+        "⬇️ Downloading from Google Drive..."
+    )
 
     try:
         match = re.search(r"/d/([a-zA-Z0-9_-]+)", text)
@@ -42,20 +49,37 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
             match = re.search(r"id=([a-zA-Z0-9_-]+)", text)
 
         if not match:
-            await status.edit_text("❌ Couldn't find file ID.")
+            await status.edit_text("❌ Couldn't find Google Drive File ID.")
             return
 
         file_id = match.group(1)
 
         url = f"https://drive.google.com/uc?id={file_id}"
 
-        output = os.path.join(DOWNLOAD_FOLDER, f"{file_id}.mp4")
+        output = os.path.join(
+            DOWNLOAD_FOLDER,
+            f"{file_id}.mp4"
+        )
 
         gdown.download(url, output, quiet=False)
 
         await status.edit_text(
             "✅ Download complete!\n\n"
-            f"Saved to:\n{output}"
+            "📝 Starting Whisper transcription..."
+        )
+
+        print("Starting Whisper...")
+
+        transcript = transcribe(output)
+
+        transcript_file = "transcript.txt"
+
+        with open(transcript_file, "w", encoding="utf-8") as f:
+            f.write(transcript)
+
+        await update.message.reply_document(
+            document=open(transcript_file, "rb"),
+            caption="✅ Transcription completed!"
         )
 
     except Exception as e:
@@ -66,7 +90,12 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_drive))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_drive
+        )
+    )
 
     print("Bot is running...")
     app.run_polling()
