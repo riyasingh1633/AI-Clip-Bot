@@ -4,6 +4,7 @@ import gdown
 
 from dotenv import load_dotenv
 from whisper_service import transcribe
+from gemini_service import find_best_clips
 
 from telegram import Update
 from telegram.ext import (
@@ -43,6 +44,7 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+        # Extract Google Drive File ID
         match = re.search(r"/d/([a-zA-Z0-9_-]+)", text)
 
         if not match:
@@ -61,6 +63,7 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{file_id}.mp4"
         )
 
+        # Download video
         gdown.download(url, output, quiet=False)
 
         await status.edit_text(
@@ -70,7 +73,8 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print("Starting Whisper...")
 
-        transcript = transcribe(output)
+        # Whisper transcription
+        transcript, duration = transcribe(output)
 
         transcript_file = "transcript.txt"
 
@@ -80,6 +84,17 @@ async def handle_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=open(transcript_file, "rb"),
             caption="✅ Transcription completed!"
+        )
+
+        # Gemini Analysis
+        await status.edit_text(
+            "🤖 Gemini is finding the best viral clips..."
+        )
+
+        clips = find_best_clips(transcript)
+
+        await update.message.reply_text(
+            "🔥 Best Viral Clips\n\n" + clips
         )
 
     except Exception as e:
