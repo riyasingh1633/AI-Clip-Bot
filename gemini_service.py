@@ -1,9 +1,9 @@
 import os
 import json
-import re
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -17,118 +17,215 @@ client = genai.Client(api_key=API_KEY)
 MODEL = "gemini-2.5-flash"
 
 
-def find_best_clips(segments, max_clips=5):
+def find_best_clips(
+    segments,
+    max_clips=5,
+    target_duration=30,
+    style="viral"
+):
 
+    if not segments:
+        raise ValueError("No Whisper segments received.")
+
+    # Build timestamped transcript
     transcript = ""
 
-    for i, segment in enumerate(segments):
+    for segment in segments:
         transcript += (
-            f"[{segment['start']:.2f} - {segment['end']:.2f}] "
+            f"[{segment['start']:.2f} - "
+            f"{segment['end']:.2f}] "
             f"{segment['text']}\n"
         )
 
+    style_instructions = {
+        "viral": """
+Prioritize strong hooks, shocking statements, conflict,
+surprising moments, curiosity gaps, strong reactions,
+controversial opinions and moments likely to retain viewers.
+""",
+
+        "emotional": """
+Prioritize emotional conversations, vulnerable moments,
+family, relationships, powerful reactions and emotional payoffs.
+""",
+
+        "funny": """
+Prioritize jokes, funny reactions, unexpected moments,
+awkward situations and entertaining dialogue.
+""",
+
+        "storytelling": """
+Prioritize complete mini-stories with a setup, development
+and satisfying payoff.
+""",
+
+        "best": """
+Choose the strongest and most engaging moments overall.
+""",
+    }
+
+    style_instruction = style_instructions.get(
+        style,
+        style_instructions["viral"]
+    )
+
     prompt = f"""
-You are an expert viral short-form video editor.
+You are an expert short-form video editor.
 
-Analyze this timestamped transcript and find the {max_clips} strongest
-moments for Instagram Reels, YouTube Shorts and TikTok.
+Analyze the timestamped transcript below.
 
-Choose moments that have:
-- strong hooks
-- emotional reactions
-- arguments
-- surprising statements
-- controversial statements
-- funny moments
-- useful information
-- storytelling
-- tension
-- reveals
-- cliffhangers
-- strong questions
-- moments that make viewers want to continue watching
+Find the BEST {max_clips} moments for short-form video.
 
-IMPORTANT:
-Do NOT simply select consecutive 6-8 second sections.
+TARGET CLIP DURATION:
+Approximately {target_duration} seconds.
 
-Each clip should normally be between 15 and 60 seconds.
+STYLE:
+{style_instruction}
 
-Start slightly before the important sentence when necessary.
-End after the payoff/reaction.
+IMPORTANT RULES:
 
-Avoid:
-- greetings
-- silence
-- boring explanations
-- repeated sentences
-- incomplete thoughts
-- clips without a payoff
+1. Do NOT simply divide the video into equal chunks.
+2. Select moments based on actual content quality.
+3. Each clip should have a strong beginning.
+4. Prefer a complete thought or conversation.
+5. Include the payoff/reaction when possible.
+6. Avoid greetings and introductions.
+7. Avoid silence.
+8. Avoid repetitive dialogue.
+9. Avoid incomplete sentences.
+10. Avoid clips with no interesting event.
+11. Do not invent timestamps.
+12. Use ONLY timestamps present in the transcript.
+13. Clips may be slightly shorter or longer than the target duration
+    if that produces a much better moment.
+14. Never make a clip longer than 60 seconds.
+15. Try to avoid overlapping clips.
 
-Return ONLY valid JSON.
+For each clip return:
 
-Format:
+start:
+The starting timestamp in seconds.
 
-[
-  {{
-    "start": 12.5,
-    "end": 42.8,
-    "reason": "Short explanation of why this moment is highly engaging",
-    "hook": "Short hook/title for the clip"
-  }}
-]
+end:
+The ending timestamp in seconds.
+
+reason:
+Why this is a strong short-form moment.
+
+hook:
+A short attention-grabbing title/hook.
+
+Return ONLY JSON.
 
 Timestamped transcript:
 
 {transcript}
 """
 
+    schema = {
+        "type": "object",
+        "properties": {
+            "clips": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start": {
+                            "type": "number"
+                        },
+                        "end": {
+                            "type": "number"
+                        },
+                        "reason": {
+                            "type": "string"
+                        },
+                        "hook": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "start",
+                        "end",
+                        "reason",
+                        "hook"
+                    ]
+                }
+            }
+        },
+        "required": ["clips"]
+    }
+
     response = client.models.generate_content(
         model=MODEL,
-        contents=prompt
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=schema,
+        )
     )
 
-    text = response.text.strip()
+    if not response.text:
+        raise RuntimeError(
+            "Gemini returned an empty response."
+        )
 
-    # Remove markdown fences if Gemini adds them
-    text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
+    try:
+        data = json.loads(response.text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Gemini returned invalid JSON: {e}"
+        )
 
-    # Find JSON array
-    match = re.search(r"\[.*\]", text, re.DOTALL)
+    clips = data.get("clips", [])
 
-    if not match:
-        raise ValueError("Gemini did not return valid clip JSON.")
+    if not isinstance(clips, list):
+        raise RuntimeError(
+            "Gemini response does not contain a clips list."
+        )
 
-    clips = json.loads(match.group(0))
+    # -----------------------------------------
+    # Determine actual transcript boundaries
+    # -----------------------------------------
+
+    video_end = max(
+        float(segment["end"])
+        for segment in segments
+    )
 
     cleaned = []
 
     for clip in clips:
 
         try:
+
             start = float(clip["start"])
             end = float(clip["end"])
+
+            start = max(0.0, start)
+            end = min(video_end, end)
 
             if end <= start:
                 continue
 
             duration = end - start
 
-            # Keep clips in a useful short-form range
-            if duration < 10:
-                end = start + 15
+            # If Gemini selected a very short moment,
+            # try to extend it toward requested duration.
+            if duration < target_duration * 0.60:
 
+                desired_end = start + target_duration
+
+                if desired_end <= video_end:
+                    end = desired_end
+
+            # Never exceed 60 seconds
             if end - start > 60:
                 end = start + 60
 
+            end = min(end, video_end)
+
+            if end - start < 3:
+                continue
+
             cleaned.append({
-                "start": start,
-                "end": end,
-                "reason": str(clip.get("reason", "")),
-                "hook": str(clip.get("hook", ""))
-            })
-
-        except (KeyError, ValueError, TypeError):
-            continue
-
-    return cleaned[:max_clips]
+                "start":
