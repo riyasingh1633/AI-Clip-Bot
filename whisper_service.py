@@ -1,11 +1,15 @@
 from faster_whisper import WhisperModel
 
-# Load Whisper model once
+print("Loading Whisper model...")
+
 model = WhisperModel(
     "base",
     device="cpu",
     compute_type="int8"
 )
+
+print("Whisper model loaded!")
+
 
 def transcribe(video_path):
     segments, info = model.transcribe(
@@ -14,9 +18,16 @@ def transcribe(video_path):
         vad_filter=True
     )
 
-    transcript = ""
+    results = []
 
     for segment in segments:
-        transcript += segment.text + "\n"
+        text = segment.text.strip()
 
-    return transcript
+        if text:
+            results.append({
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "text": text
+            })
+
+    return results
