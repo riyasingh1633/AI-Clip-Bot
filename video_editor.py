@@ -4,17 +4,13 @@ import subprocess
 
 OUTPUT_FOLDER = "clips"
 
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(
+    OUTPUT_FOLDER,
+    exist_ok=True
+)
 
 
-def get_video_duration(video_path):
-    command = [
-        "ffprobe",
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        video_path
-    ]
+def run_command(command):
 
     result = subprocess.run(
         command,
@@ -24,57 +20,190 @@ def get_video_duration(video_path):
     )
 
     if result.returncode != 0:
+
         raise RuntimeError(
-            "FFprobe failed:\n" + result.stderr[-2000:]
+            result.stderr[-4000:]
         )
+
+    return result
+
+
+def get_video_duration(video_path):
+
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        video_path
+    ]
+
+    result = run_command(command)
 
     try:
-        return float(result.stdout.strip())
-    except ValueError:
-        raise RuntimeError("Could not determine video duration.")
-
-
-def create_clip(video_path, start, end, clip_number):
-
-    video_duration = get_video_duration(video_path)
-
-    print(f"Video duration: {video_duration:.2f}s")
-    print(f"Requested clip: {start:.2f}s -> {end:.2f}s")
-
-    # Safety limits
-    start = max(0.0, float(start))
-    end = min(float(end), video_duration)
-
-    # Make sure start is inside the video
-    if start >= video_duration:
-        raise RuntimeError(
-            f"Clip start {start:.2f}s is beyond "
-            f"video duration {video_duration:.2f}s."
+        return float(
+            result.stdout.strip()
         )
 
-    # Minimum useful duration
-    if end - start < 3:
+    except ValueError:
+
+        raise RuntimeError(
+            "Could not determine video duration."
+        )
+
+
+def get_video_dimensions(video_path):
+
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "csv=s=x:p=0",
+        video_path
+    ]
+
+    result = run_command(command)
+
+    try:
+
+        width, height = map(
+            int,
+            result.stdout.strip().split("x")
+        )
+
+        return width, height
+
+    except Exception:
+
+        raise RuntimeError(
+            "Could not determine video dimensions."
+        )
+
+
+def get_video_filter(video_format):
+
+    if video_format == "9:16":
+
+        return (
+            "scale=1080:1920:"
+            "force_original_aspect_ratio=increase,"
+            "crop=1080:1920"
+        )
+
+    if video_format == "1:1":
+
+        return (
+            "scale=1080:1080:"
+            "force_original_aspect_ratio=increase,"
+            "crop=1080:1080"
+        )
+
+    if video_format == "16:9":
+
+        return (
+            "scale=1920:1080:"
+            "force_original_aspect_ratio=increase,"
+            "crop=1920:1080"
+        )
+
+    return None
+
+
+def create_clip(
+    video_path,
+    start,
+    end,
+    clip_number,
+    video_format="original",
+    captions=True,
+    segments=None
+):
+
+    # -----------------------------------------
+    # Get actual video duration
+    # -----------------------------------------
+
+    video_duration = get_video_duration(
+        video_path
+    )
+
+    print(
+        f"Video duration: "
+        f"{video_duration:.2f}s"
+    )
+
+    # -----------------------------------------
+    # Clamp timestamps
+    # -----------------------------------------
+
+    start = max(
+        0.0,
+        float(start)
+    )
+
+    end = min(
+        float(end),
+        video_duration
+    )
+
+    if start >= video_duration:
+
+        raise RuntimeError(
+            f"Clip starts after video ends: "
+            f"{start:.2f}s"
+        )
+
+    if end <= start:
+
+        raise RuntimeError(
+            f"Invalid clip range: "
+            f"{start:.2f} -> {end:.2f}"
+        )
+
+    duration = end - start
+
+    # -----------------------------------------
+    # Minimum duration protection
+    # -----------------------------------------
+
+    if duration < 3:
+
         end = min(
             start + 15,
             video_duration
         )
 
-    if end <= start:
+        duration = end - start
+
+    if duration < 2:
+
         raise RuntimeError(
-            f"Invalid clip range: {start:.2f} -> {end:.2f}"
+            "Selected clip is too short."
         )
 
-    duration = end - start
+    # -----------------------------------------
+    # Output filename
+    # -----------------------------------------
 
     output_path = os.path.join(
         OUTPUT_FOLDER,
         f"viral_clip_{clip_number}.mp4"
     )
 
-    print(
-        f"Creating clip {clip_number}: "
-        f"{start:.2f}s -> {end:.2f}s "
-        f"({duration:.2f}s)"
+    # -----------------------------------------
+    # Video filter
+    # -----------------------------------------
+
+    video_filter = get_video_filter(
+        video_format
     )
 
     command = [
@@ -95,7 +224,20 @@ def create_clip(video_path, start, end, clip_number):
 
         "-map",
         "0:a?",
-        
+    ]
+
+    # -----------------------------------------
+    # Video processing
+    # -----------------------------------------
+
+    if video_filter:
+
+        command += [
+            "-vf",
+            video_filter
+        ]
+
+    command += [
         "-c:v",
         "libx264",
 
@@ -105,8 +247,14 @@ def create_clip(video_path, start, end, clip_number):
         "-crf",
         "23",
 
+        "-pix_fmt",
+        "yuv420p",
+
         "-c:a",
         "aac",
+
+        "-b:a",
+        "128k",
 
         "-movflags",
         "+faststart",
@@ -114,43 +262,48 @@ def create_clip(video_path, start, end, clip_number):
         output_path
     ]
 
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+    print(
+        f"Creating clip {clip_number}: "
+        f"{start:.2f}s -> {end:.2f}s"
     )
 
-    if result.returncode != 0:
+    run_command(command)
+
+    # -----------------------------------------
+    # Verify output
+    # -----------------------------------------
+
+    if not os.path.exists(
+        output_path
+    ):
+
         raise RuntimeError(
-            "FFmpeg failed:\n" +
-            result.stderr[-3000:]
+            "FFmpeg did not create the clip."
         )
 
-    if not os.path.exists(output_path):
+    size = os.path.getsize(
+        output_path
+    )
+
+    if size < 10000:
+
         raise RuntimeError(
-            "Clip was not created."
+            "Generated clip is empty or invalid."
         )
 
-    if os.path.getsize(output_path) < 10000:
-        raise RuntimeError(
-            "FFmpeg created an invalid/empty clip."
-        )
-
-    # Verify the generated clip
     generated_duration = get_video_duration(
         output_path
     )
 
     print(
-        f"Generated clip duration: "
+        f"Generated duration: "
         f"{generated_duration:.2f}s"
     )
 
     if generated_duration < 2:
+
         raise RuntimeError(
-            f"Generated clip is too short: "
-            f"{generated_duration:.2f}s"
+            "Generated clip is too short."
         )
 
     return output_path
